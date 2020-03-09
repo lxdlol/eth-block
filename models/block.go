@@ -30,7 +30,7 @@ type Block struct {
 	'uncles': []})
 
 	*/
-	Number            int64   `json:"number"` //unique
+	Number            int64   `json:"number" bson:"number"` //unique
 	Difficulty        int64   `json:"difficulty"`
 	ExtraData         string  `json:"extra_data"` //附加数据
 	GasLimit          int64   `json:"gas_limit"`
