@@ -160,7 +160,6 @@ type Account struct {
 type Transfer struct {
 	/**
 	转账
-
 	index 1: address,timestamp
 	index 2: timestamp
 	index 3: contract_address timestamp
