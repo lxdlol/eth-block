@@ -5,6 +5,7 @@ import (
 	"math/big"
 )
 
+//区块表
 type Block struct {
 	/**
 	AttributeDict(
@@ -53,6 +54,9 @@ type Block struct {
 	Uncles            []Block `json:"uncles"`
 }
 
+//插入区块
+
+//交易信息表
 type Transaction struct {
 	/**
 
@@ -135,6 +139,7 @@ type Log struct {
 	Removed bool `json:"removed" bson:"removed"`
 }
 
+//token 表
 type Token struct {
 	ContractAddress string   `json:"contract_address" bson:"contract_address"`
 	Name            string   `json:"name" bson:"name"`
@@ -143,6 +148,7 @@ type Token struct {
 	TotalSupply     *big.Int `json:"total_supply" bson:"total_supply"`
 }
 
+//账户
 type Account struct {
 	/**
 	账户
@@ -157,6 +163,7 @@ type Account struct {
 	BlockNumber     int64           `json:"block_number"`     //更新余额时的区块链高度
 }
 
+//交易
 type Transfer struct {
 	/**
 	转账
