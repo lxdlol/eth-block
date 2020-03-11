@@ -13,7 +13,7 @@ import (
  */
 
 func main() {
-	client, err := ethclient.Dial("https://mainnet.infura.io")
+	client, err := ethclient.Dial("ws://192.168.8.126:8561")
 	if err != nil {
 		log.Fatal(err)
 	}

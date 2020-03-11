@@ -11,11 +11,11 @@ var mgosess *mgo.Session
 //初始化链接
 func init() {
 	dialinfo := mgo.DialInfo{
-		Addrs:     []string{cnf.CnfStr.Dbpath},
+		Addrs:     []string{"192.168.8.126:27017"},
 		Timeout:   500 * time.Millisecond,
-		Username:  cnf.CnfStr.MGUser,
+		Username:  "",
 		Source:    "admin",
-		Password:  cnf.CnfStr.MGPassword,
+		Password:  "",
 		PoolLimit: 100,
 	}
 	session, e := mgo.DialWithInfo(&dialinfo)
