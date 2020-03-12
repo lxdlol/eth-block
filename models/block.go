@@ -155,6 +155,7 @@ type Account struct {
 	index 1:address
 	index 2:ContractAddress Balance
 	index 3:address ContractAddress
+	balance=value/10**decimals
 	*/
 	ContractAddress string          `json:"contract_address"` //contract address,如果是系统币, contract_address=BASE
 	Symbol          string          `json:"symbol"`           //代币的符号
