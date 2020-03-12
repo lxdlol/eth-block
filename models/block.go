@@ -31,32 +31,32 @@ type Block struct {
 	'uncles': []})
 
 	*/
-	Number            int64   `json:"number" bson:"number"` //unique
-	Difficulty        int64   `json:"difficulty"`
-	ExtraData         string  `json:"extra_data"` //附加数据
-	GasLimit          int64   `json:"gas_limit"`
-	GasUsed           int64   `json:"gas_used"`
-	Hash              string  `json:"hash"`
-	LogsBloom         string  `json:"logs_bloom"`
-	Miner             string  `json:"miner"`
-	MinerName         string  `json:"miner_name"` //播报方
-	MixHash           string  `json:"mix_hash"`
-	Nonce             string  `json:"nonce"`
-	ParentHash        string  `json:"parent_hash"`
-	ReceiptsRoot      string  `json:"receipts_root"`
-	Sha3Uncles        string  `json:"sha_3_uncles"`
-	Size              int64   `json:"size"`
-	StateRoot         string  `json:"state_root"`
-	Timestamp         string  `json:"timestamp"`
-	TotalDifficulty   int64   `json:"total_difficulty"`
-	TransactionsCount int64   `json:"transactions_counts"` //交易
-	TransactionsRoot  string  `json:"transactions_root"`
-	Uncles            []Block `json:"uncles"`
+	Number            *big.Int `json:"number" bson:"number"` //unique
+	Difficulty        *big.Int `json:"difficulty"`
+	ExtraData         string   `json:"extra_data"` //附加数据
+	GasLimit          uint64   `json:"gas_limit"`
+	GasUsed           uint64   `json:"gas_used"`
+	Hash              string   `json:"hash"`
+	LogsBloom         string   `json:"logs_bloom"`
+	Miner             string   `json:"miner"`
+	MinerName         string   `json:"miner_name"` //播报方
+	MixHash           string   `json:"mix_hash"`
+	Nonce             uint64   `json:"nonce"`
+	ParentHash        string   `json:"parent_hash"`
+	ReceiptsRoot      string   `json:"receipts_root"`
+	Sha3Uncles        string   `json:"sha_3_uncles"`
+	Size              string   `json:"size"`
+	StateRoot         string   `json:"state_root"`
+	Timestamp         string   `json:"timestamp"`
+	TotalDifficulty   *big.Int `json:"total_difficulty"`
+	TransactionsCount int      `json:"transactions_counts"` //交易
+	TransactionsRoot  string   `json:"transactions_root"`
+	Uncles            []Block  `json:"uncles"`
 }
 
 //插入区块
 
-//交易信息表
+//一个区块包含的交易信息表
 type Transaction struct {
 	/**
 
@@ -163,7 +163,7 @@ type Account struct {
 	BlockNumber     int64           `json:"block_number"`     //更新余额时的区块链高度
 }
 
-//交易
+//单体交易表
 type Transfer struct {
 	/**
 	转账
