@@ -1,11 +1,16 @@
 package models
 
+import (
+	"ethereum-block/db"
+	"gopkg.in/mgo.v2/bson"
+)
+
 type Metric struct {
 	/**
 	区块链性能度量数据
 	*/
-	BlockNumber           int8  `json:"block_number"`      //unique,index
-	TransactionCount      int8  `json:"transaction_count"` //该区块链交易数
+	BlockNumber           int64 `json:"block_number"`      //unique,index
+	TransactionCount      int64 `json:"transaction_count"` //该区块链交易数
 	Timestamp             int64 `json:"timestamp"`
 	Duration              int8  `json:"duration"`                //区块处理时间，秒。
 	Tps                   int8  `json:"tps"`                     //index,TransactionCount/Duration
@@ -18,6 +23,29 @@ type Node struct {
 	Name     string `json:"name"`
 	Ip       string `json:"ip"`
 	Geo      string `json:"geo"`
+}
+
+//查询node
+func FindMetric(num int64) (Metric, error) {
+	session, collection := db.Connect(db.DB, "metric")
+	defer session.Close()
+	var m Metric
+	if err := collection.Find(bson.M{"blocknumber": num}).One(&m); err != nil {
+		return m, err
+	}
+	return m, nil
+}
+func InsertMetric(m Metric) error {
+	session, collection := db.Connect(db.DB, "metric")
+	defer session.Close()
+	insert := collection.Insert(&m)
+	return insert
+}
+func UpdateMetric(filed int64, tps int64, dur int64) error {
+	session, collection := db.Connect(db.DB, "metric")
+	defer session.Close()
+	update := collection.Update(bson.M{"block_number": filed}, bson.M{"$set": bson.M{"tps": tps, "duration": dur}})
+	return update
 }
 
 type CandidateNode struct {

@@ -1,7 +1,17 @@
 package models
 
 import (
+	"context"
+	"ethereum-block/db"
+	token "ethereum-block/erc20"
+	"ethereum-block/ethconnect"
+	"ethereum-block/log"
+	"github.com/ethereum/go-ethereum/accounts/abi/bind"
+	"github.com/ethereum/go-ethereum/common"
+	"github.com/shopspring/decimal"
+	"gopkg.in/mgo.v2"
 	"gopkg.in/mgo.v2/bson"
+	"math"
 	"math/big"
 )
 
@@ -31,27 +41,27 @@ type Block struct {
 	'uncles': []})
 
 	*/
-	Number            *big.Int `json:"number" bson:"number"` //unique
-	Difficulty        *big.Int `json:"difficulty"`
-	ExtraData         string   `json:"extra_data"` //附加数据
-	GasLimit          uint64   `json:"gas_limit"`
-	GasUsed           uint64   `json:"gas_used"`
-	Hash              string   `json:"hash"`
-	LogsBloom         string   `json:"logs_bloom"`
-	Miner             string   `json:"miner"`
-	MinerName         string   `json:"miner_name"` //播报方
-	MixHash           string   `json:"mix_hash"`
-	Nonce             uint64   `json:"nonce"`
-	ParentHash        string   `json:"parent_hash"`
-	ReceiptsRoot      string   `json:"receipts_root"`
-	Sha3Uncles        string   `json:"sha_3_uncles"`
-	Size              string   `json:"size"`
-	StateRoot         string   `json:"state_root"`
-	Timestamp         string   `json:"timestamp"`
-	TotalDifficulty   *big.Int `json:"total_difficulty"`
-	TransactionsCount int      `json:"transactions_counts"` //交易
-	TransactionsRoot  string   `json:"transactions_root"`
-	Uncles            []Block  `json:"uncles"`
+	Number            bson.Decimal128 `json:"number" bson:"number"` //unique
+	Difficulty        bson.Decimal128 `json:"difficulty"`
+	ExtraData         string          `json:"extra_data"` //附加数据
+	GasLimit          string          `json:"gas_limit"`
+	GasUsed           string          `json:"gas_used"`
+	Hash              string          `json:"hash"`
+	LogsBloom         string          `json:"logs_bloom"`
+	Miner             string          `json:"miner"`
+	MinerName         string          `json:"miner_name"` //播报方
+	MixHash           string          `json:"mix_hash"`
+	Nonce             string          `json:"nonce"`
+	ParentHash        string          `json:"parent_hash"`
+	ReceiptsRoot      string          `json:"receipts_root"`
+	Sha3Uncles        string          `json:"sha_3_uncles"`
+	Size              string          `json:"size"`
+	StateRoot         string          `json:"state_root"`
+	Timestamp         string          `json:"timestamp"`
+	TotalDifficulty   bson.Decimal128 `json:"total_difficulty"`
+	TransactionsCount int             `json:"transactions_counts"` //交易
+	TransactionsRoot  string          `json:"transactions_root"`
+	Uncles            []Block         `json:"uncles"`
 }
 
 //插入区块
@@ -83,15 +93,15 @@ type Transaction struct {
 	BlockHash          string             `json:"block_hash" bson:"block_hash"`
 	BlockNumber        int64              `json:"block_number" bson:"block_number"`
 	From               string             `json:"from" bson:"from"`
-	Gas                uint64             `json:"gas" bson:"gas"`
+	Gas                string             `json:"gas" bson:"gas"`
 	GasPrice           int64              `json:"gas_price" bson:"gas_price"`
 	Hash               string             `json:"hash"`
 	Input              string             `json:"input"` //输入数据
-	Nonce              uint64             `json:"nonce"`
+	Nonce              string             `json:"nonce"`
 	To                 string             `json:"to"`
 	TransactionIndex   int64              `json:"transaction_index"` //position
-	Value              *big.Int           `json:"value"`
-	V                  *big.Int           `json:"v"`
+	Value              bson.Decimal128    `json:"value"`
+	V                  bson.Decimal128    `json:"v"`
 	R                  string             `json:"r"`
 	S                  string             `json:"s"`
 	TransactionReceipt TransactionReceipt `json:"transaction_receipt" bson:"transaction_receipt"` //交易结果
@@ -141,11 +151,21 @@ type Log struct {
 
 //token 表
 type Token struct {
-	ContractAddress string   `json:"contract_address" bson:"contract_address"`
-	Name            string   `json:"name" bson:"name"`
-	Symbol          string   `json:"symbol" bson:"symbol"`
-	Decimals        int8     `json:"decimals" bson:"decimals"`
-	TotalSupply     *big.Int `json:"total_supply" bson:"total_supply"`
+	ContractAddress string          `json:"contract_address" bson:"contract_address"`
+	Name            string          `json:"name" bson:"name"`
+	Symbol          string          `json:"symbol" bson:"symbol"`
+	Decimals        int8            `json:"decimals" bson:"decimals"`
+	TotalSupply     bson.Decimal128 `json:"total_supply" bson:"total_supply"`
+}
+
+func InsertToken(token Token) error {
+	session, collection := db.Connect(db.DB, "account")
+	defer session.Close()
+	err := collection.Insert(&token)
+	if err != nil {
+		return err
+	}
+	return nil
 }
 
 //账户
@@ -157,11 +177,69 @@ type Account struct {
 	index 3:address ContractAddress
 	balance=value/10**decimals
 	*/
-	ContractAddress string          `json:"contract_address"` //contract address,如果是系统币, contract_address=BASE
-	Symbol          string          `json:"symbol"`           //代币的符号
-	Address         string          `json:"address"`          //账户地址
-	Balance         bson.Decimal128 `json:"balance"`          //账户余额
-	BlockNumber     int64           `json:"block_number"`     //更新余额时的区块链高度
+	ContractAddress string          `json:"contract_address" bson:"contract_address"` //contract address,如果是系统币, contract_address=BASE
+	Symbol          string          `json:"symbol" bson:"symbol"`                     //代币的符号
+	Address         string          `json:"address" bson:"address"`                   //账户地址
+	Balance         bson.Decimal128 `json:"balance" bson:"balance"`                   //账户余额
+	BlockNumber     int64           `json:"block_number" bson:"block_number"`         //更新余额时的区块链高度
+}
+
+//查询账户是否存在
+func AccountIsExist(address, contract string, number int64, symbol string) {
+	session, collection := db.Connect(db.DB, "account")
+	defer session.Close()
+	var account Account
+	if err := collection.Find(bson.M{"contract_address": contract, "address": address}).One(&account); err != nil {
+		if err == mgo.ErrNotFound {
+			//账户不存在，需要新增
+			account.Symbol = symbol
+			account.ContractAddress = contract
+			account.Address = address
+			account.BlockNumber = number
+			if err := collection.Insert(&account); err != nil {
+				log.Log.Error(err.Error())
+				panic(err)
+			}
+		} else {
+			log.Log.Error(err.Error())
+			panic(err)
+		}
+	}
+	var balance bson.Decimal128
+	if contract == "BASE" {
+		//S是以太坊交易，查询以太坊余额
+		account := common.HexToAddress(address)
+		b, err := ethconnect.Client.BalanceAt(context.Background(), account, big.NewInt(number))
+		if err != nil {
+			log.Log.Fatal(err)
+		}
+		fbalance := new(big.Float)
+		fbalance.SetString(b.String())
+		ethValue := new(big.Float).Quo(fbalance, big.NewFloat(math.Pow10(18))).String()
+		balance, _ = bson.ParseDecimal128(ethValue)
+	} else {
+		//是代币交易
+		account := common.HexToAddress(contract)
+		newToken, e := token.NewToken(account, ethconnect.Client)
+		if e != nil {
+			log.Log.Fatal(e)
+		}
+		address := common.HexToAddress(address)
+		bal, err := newToken.BalanceOf(&bind.CallOpts{}, address)
+		if err != nil {
+			log.Log.Fatal(err)
+		}
+		var con Token
+		if e = collection.Find(bson.M{"contract_address": contract}).One(&con); e != nil {
+			log.Log.Error(e.Error())
+		}
+		div := decimal.NewFromInt(bal.Int64()).Div(decimal.NewFromInt(int64(math.Pow10(int(con.Decimals))))).String()
+		balance, _ = bson.ParseDecimal128(div)
+	}
+	if err := collection.Update(bson.M{"contract_address": contract, "address": address}, bson.M{"$set": bson.M{"balance": balance}}); err != nil {
+		log.Log.Error(err.Error())
+		panic(err)
+	}
 }
 
 //单体交易表

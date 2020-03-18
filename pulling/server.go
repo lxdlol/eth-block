@@ -2,114 +2,147 @@ package pulling
 
 import (
 	"context"
+	"encoding/json"
 	"ethereum-block/db"
+	token "ethereum-block/erc20"
+	"ethereum-block/ethconnect"
 	"ethereum-block/log"
 	"ethereum-block/models"
 	"fmt"
+	"github.com/ethereum/go-ethereum/accounts/abi/bind"
+	"github.com/ethereum/go-ethereum/common"
 	"github.com/ethereum/go-ethereum/core/types"
-	"github.com/ethereum/go-ethereum/ethclient"
-	"math/big"
+	"github.com/shopspring/decimal"
+	"gopkg.in/mgo.v2/bson"
+	"math"
 	"strconv"
 )
 
-const (
-	DB = "ethereum-block"
-)
-
 var (
-	Block  = make(chan *types.Block, 100)
-	Client *ethclient.Client
-	err    error
+	Block       = make(chan *types.Block, 10000)
+	Account     = make(chan models.Transfer, 100000)
+	err         error
+	TransferNum int
+	Tps         = make(chan models.Metric, 10000)
 )
 
+//获取区块信息
 func GetBlock() {
-	Client, err = ethclient.Dial("ws://192.168.8.126:8561")
-	if err != nil {
-		log.Log.Fatal(err)
-	}
-
 	headers := make(chan *types.Header)
-	sub, err := Client.SubscribeNewHead(context.Background(), headers)
+	sub, err := ethconnect.Client.SubscribeNewHead(context.Background(), headers)
 	if err != nil {
 		log.Log.Fatal(err)
 	}
-
+	fmt.Println("start")
+	var temp string
 	for {
 		select {
 		case err := <-sub.Err():
 			log.Log.Fatal(err)
 		case header := <-headers:
 			fmt.Println(header.Hash().Hex()) // 0xbc10defa8dda384c96a17640d84de5578804945d347072e091b4e5f390ddea7f
-			block, err := Client.BlockByHash(context.Background(), header.Hash())
-			if err != nil {
-				log.Log.Fatal(err)
+			if temp != header.Hash().Hex() {
+				block, err := ethconnect.Client.BlockByHash(context.Background(), header.Hash())
+				if err != nil {
+					log.Log.Fatal(err)
+				}
+				fmt.Println(block.Number())
+				Block <- block
+				fmt.Println("ok")
 			}
-			Block <- block
+			temp = header.Hash().Hex()
 		}
 	}
 }
-func DealBlockInfo(ch chan *types.Block) {
-	for block := range ch {
-		//InsertBlock(block)
-		InsertBlockTransfer(block)
+func DealBlockInfo() {
+	for {
+		var n int
+		fmt.Println("开始解析数据")
+		select {
+		case block := <-Block:
+			n++
+			InsertBlock(block)
+			InsertBlockTransfer(block)
+			InsertTransfer(block)
+			fmt.Println("一个区块完成", n)
+		}
 	}
 }
 
 //插入区块信息
 func InsertBlock(block *types.Block) {
-	session, collection := db.Connect(DB, "transaction")
+	session, collection := db.Connect(db.DB, "block")
 	defer session.Close()
-	block_tmp := models.Block{
-		block.Header().Number,
-		block.Header().Difficulty,
+	var block_tmp models.Block
+	number, _ := bson.ParseDecimal128(block.Number().String())
+	diff, _ := bson.ParseDecimal128(block.Difficulty().String())
+	totaldiff, _ := bson.ParseDecimal128("0")
+	block_tmp = models.Block{
+		number,
+		diff,
 		string(block.Extra()),
-		block.Header().GasLimit,
-		block.GasUsed(),
-		block.Header().Hash().String(),
+		strconv.FormatUint(block.Header().GasLimit, 32),
+		strconv.FormatUint(block.GasUsed(), 32),
+		block.Hash().Hex(),
 		string(block.Bloom().Bytes()),
 		block.Header().Coinbase.String(),
 		"",
-		block.MixDigest().String(),
-		block.Nonce(),
-		block.ParentHash().String(),
-		block.ReceiptHash().String(),
+		block.MixDigest().Hex(),
+		strconv.FormatUint(block.Nonce(), 32),
+		block.ParentHash().Hex(),
+		block.ReceiptHash().Hex(),
 		"",
 		block.Size().String(),
 		block.Root().String(),
-		strconv.FormatUint(block.Time(), 64),
-		big.NewInt(0),
+		strconv.FormatUint(block.Time(), 32),
+		totaldiff,
 		block.Transactions().Len(),
-		block.Header().TxHash.String(),
+		block.Header().TxHash.Hex(),
 		[]models.Block{},
 	}
+	fmt.Println("区块信息:", block_tmp.Number)
+	fmt.Println("....")
 	e := collection.Insert(&block_tmp)
-	log.Log.Error(e.Error())
-	panic(e)
-
+	fmt.Println(e)
+	if e != nil {
+		log.Log.Error(e.Error())
+		panic(e)
+	}
 }
 
 //插入区块交易信息
 func InsertBlockTransfer(block *types.Block) {
+	fmt.Println("处理区块交易")
 	tx := block.Transactions()
-	session, collection := db.Connect(DB, "block")
+	session, collection := db.Connect(db.DB, "transaction")
 	defer session.Close()
 	for k, v := range tx {
 		//获取交易信息
 		var transaction models.Transaction
 		v2, r, s := v.RawSignatureValues()
+		fromString, _ := decimal.NewFromString(v.Value().String())
+		i := fromString.Div(decimal.NewFromInt(int64(math.Pow10(18)))).String()
+		value, _ := bson.ParseDecimal128(i)
+		v22, _ := bson.ParseDecimal128(v2.String())
+		var to string
+		if v.To() == nil {
+			to = ""
+		} else {
+			to = v.To().String()
+		}
 		transaction = models.Transaction{
-			BlockHash:          block.Hash().String(),
+			BlockHash:          block.Hash().Hex(),
 			BlockNumber:        block.Number().Int64(),
 			From:               GetSendAddr(v),
-			Gas:                v.Gas(),
+			Gas:                strconv.FormatUint(v.Gas(), 32),
 			GasPrice:           v.GasPrice().Int64(),
-			Hash:               v.Hash().String(),
-			Input:              string(v.Data()),
-			Nonce:              v.Nonce(),
-			To:                 v.To().String(),
+			Hash:               v.Hash().Hex(),
+			Input:              "",
+			Nonce:              strconv.FormatUint(v.Nonce(), 32),
+			To:                 to,
 			TransactionIndex:   int64(k + 1),
-			Value:              v.Value(),
-			V:                  v2,
+			Value:              value,
+			V:                  v22,
 			R:                  r.String(),
 			S:                  s.String(),
 			TransactionReceipt: models.TransactionReceipt{},
@@ -123,14 +156,25 @@ func InsertBlockTransfer(block *types.Block) {
 
 //解析区块交易信息，分解
 func InsertTransfer(block *types.Block) {
-
+	fmt.Println("处理每一笔交易")
+	tx := block.Transactions()
+	var num int64
+	for _, v := range tx {
+		n := DoReceipt(v, block)
+		num += n
+	}
+	var node models.Metric
+	node.BlockNumber = block.Number().Int64()
+	node.Timestamp = int64(block.Time())
+	node.TransactionCount = num
+	fmt.Println("计算tps")
+	Tps <- node
+	fmt.Println("单笔交易end")
 }
-
-//计算节点tps
 
 //获取发送地址
 func GetSendAddr(tx *types.Transaction) string {
-	chainID, err := Client.NetworkID(context.Background())
+	chainID, err := ethconnect.Client.NetworkID(context.Background())
 	if err != nil {
 		log.Log.Fatal(err)
 	}
@@ -141,12 +185,178 @@ func GetSendAddr(tx *types.Transaction) string {
 	}
 }
 
-func GetReceipt(tx *types.Transaction) {
-	receipt, err := Client.TransactionReceipt(context.Background(), tx.Hash())
+//处理每条交易的log生成可索引的交易记录,
+func DoReceipt(tx *types.Transaction, block *types.Block) int64 {
+	receipt, err := ethconnect.Client.TransactionReceipt(context.Background(), tx.Hash())
 	if err != nil {
 		log.Log.Fatal(err)
 	}
-	for _, k := range receipt.Logs {
-		k.Topics
+	s, collection := db.Connect(db.DB, "transfer")
+	defer s.Close()
+	//区块交易次数
+	var num int64 = 0
+	if len(receipt.Logs) > 0 {
+		//代币交易
+		var Transfer models.Transfer
+		for index, k := range receipt.Logs {
+			//查询token表是否存在这种代币地址
+			//大于0有代笔交易，否则没有代笔交易，eth交易
+			if len(k.Topics) > 0 && k.Topics[0].Hex() != "" {
+				num++
+				var result models.Token
+				var symbol string
+				session, c := db.Connect(db.DB, "token")
+				defer session.Close()
+				if err := c.Find(bson.M{"contract_address": k.Topics[0].Hex()}).One(&result); err != nil {
+					//未知代币交易，用rpc调用查询到这种代币合约，存入token表
+					tokenAddress := common.HexToAddress(k.Topics[0].String())
+					newToken, err := token.NewToken(tokenAddress, ethconnect.Client)
+					if err != nil {
+						log.Log.Error(err.Error())
+					}
+					s, err := newToken.Symbol(&bind.CallOpts{})
+					if err != nil {
+						log.Log.Error(k.Topics[0].String() + "," + k.Topics[0].Hex() + err.Error())
+						goto Here
+					}
+					supply, err := newToken.TotalSupply(&bind.CallOpts{})
+					if err != nil {
+						log.Log.Error(err.Error())
+					}
+					decimals, err := newToken.Decimals(&bind.CallOpts{})
+					if err != nil {
+						log.Log.Error(err.Error())
+					}
+					name, err := newToken.Name(&bind.CallOpts{})
+					if err != nil {
+						log.Log.Error(err.Error())
+					}
+					decimal128, _ := bson.ParseDecimal128(supply.String())
+					var token models.Token = models.Token{
+						ContractAddress: k.Topics[0].Hex(),
+						Name:            name,
+						Symbol:          s,
+						Decimals:        int8(decimals),
+						TotalSupply:     decimal128,
+					}
+					if err := models.InsertToken(token); err != nil {
+						log.Log.Error(err)
+						delErr(err)
+					}
+					symbol = s
+				} else {
+					//已知代币交易
+					symbol = result.Symbol
+				}
+				var num string
+				json.Unmarshal(k.Data, &num)
+				fromString, _ := decimal.NewFromString(num)
+				fmt.Println("交易额度：", fromString)
+				div := fromString.Div(decimal.NewFromInt(int64(math.Pow10(int(result.Decimals)))))
+				decimal128, _ := bson.ParseDecimal128(div.String())
+				Transfer = models.Transfer{
+					ContractAddress: result.ContractAddress,
+					Symbol:          symbol,
+					From:            k.Topics[1].Hex(),
+					To:              k.Topics[2].Hex(),
+					Value:           decimal128,
+					TransactionHash: tx.Hash().Hex(),
+					TransferIndex:   int8(index + 1),
+					BlockNumber:     block.Number().Int64(),
+					Timestamp:       int64(block.Time()),
+					Hash:            tx.Hash().Hex() + strconv.Itoa(index+1),
+				}
+				Account <- Transfer
+				if err := collection.Insert(&Transfer); err != nil {
+					delErr(err)
+				}
+			}
+		}
+	}
+Here:
+	//是否有以太坊交易
+	if tx.Value().Int64() > 0 {
+		num++
+		//太坊交易
+		var Transfer models.Transfer
+		decimal128, _ := bson.ParseDecimal128(strconv.Itoa(int(tx.Value().Int64() / int64(math.Pow10(18)))))
+		Transfer = models.Transfer{
+			ContractAddress: "BASE",
+			Symbol:          "",
+			From:            GetSendAddr(tx),
+			To:              tx.To().Hex(),
+			Value:           decimal128,
+			TransactionHash: tx.Hash().Hex(),
+			TransferIndex:   1,
+			BlockNumber:     block.Number().Int64(),
+			Timestamp:       int64(block.Time()),
+			Hash:            tx.Hash().Hex() + "1",
+		}
+		if err := collection.Insert(&Transfer); err != nil {
+			log.Log.Error(err.Error())
+			panic(err)
+		}
+		Account <- Transfer
+	}
+	//传输区块交易交易数量信息
+	return num
+}
+
+//错误处理
+func delErr(err error) {
+	log.Log.Error(err.Error())
+	panic(err)
+}
+
+//账户更新
+func UpdateCountBalance() {
+	//轮寻account管道，获取账户数据
+	var n int
+	for {
+		select {
+		case v := <-Account:
+			n++
+			fmt.Println("账户越更新：", v)
+			//查询账户是否存在，存在更新账户余额，不存在创建
+			models.AccountIsExist(v.To, v.ContractAddress, v.BlockNumber, v.Symbol)
+			models.AccountIsExist(v.From, v.ContractAddress, v.BlockNumber, v.Symbol)
+			fmt.Println("完成一次", n)
+		}
+	}
+}
+
+func UpdateTps() {
+	for {
+		select {
+		case v := <-Tps:
+			//查找上一个区块时间，计算duration
+			fmt.Println("上一个区块高度", v.BlockNumber-1)
+			metric, e := models.FindMetric(v.BlockNumber - 1)
+			fmt.Println(e)
+			if e != nil {
+				metric = models.Metric{
+					BlockNumber:           v.BlockNumber,
+					TransactionCount:      v.TransactionCount,
+					Timestamp:             v.Timestamp,
+					Duration:              0,
+					Tps:                   0,
+					TotalTransactionCount: int64(v.TransactionCount),
+				}
+				e := models.InsertMetric(metric)
+				if e != nil {
+					delErr(e)
+				}
+			} else {
+				duration := (v.Timestamp - metric.Timestamp)
+				fmt.Println(duration)
+				tps := metric.TransactionCount / duration
+				fmt.Println(tps)
+				total := metric.TotalTransactionCount + v.TransactionCount
+				v.TotalTransactionCount = total
+				models.InsertMetric(v)
+				models.UpdateMetric(v.BlockNumber-1, tps, duration)
+			}
+			fmt.Println("tps计算完成")
+		}
 	}
 }
