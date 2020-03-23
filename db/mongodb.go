@@ -9,17 +9,17 @@ import (
 var mgosess *mgo.Session
 
 const (
-	DB = "ethereum-block"
+	DB = "ethereum-lxd"
 )
 
 //初始化链接
 func init() {
 	dialinfo := mgo.DialInfo{
-		Addrs:     []string{"127.0.0.1:27017"},
+		Addrs:     []string{"192.168.8.126:27017"},
 		Timeout:   500 * time.Millisecond,
 		Username:  "admin",
 		Source:    "admin",
-		Password:  "123456",
+		Password:  "1025",
 		PoolLimit: 100,
 	}
 	session, e := mgo.DialWithInfo(&dialinfo)

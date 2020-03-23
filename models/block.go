@@ -13,6 +13,7 @@ import (
 	"gopkg.in/mgo.v2/bson"
 	"math"
 	"math/big"
+	"strconv"
 )
 
 //区块表
@@ -62,6 +63,18 @@ type Block struct {
 	TransactionsCount int             `json:"transactions_counts"` //交易
 	TransactionsRoot  string          `json:"transactions_root"`
 	Uncles            []Block         `json:"uncles"`
+}
+
+func MaxBlock() int {
+	session, collection := db.Connect(db.DB, "block")
+	defer session.Close()
+	var block Block
+	collection.Find(nil).Sort("-number").One(&block)
+	i, _ := strconv.Atoi(block.Number.String())
+	if i < 500001 {
+		i = 500001
+	}
+	return i
 }
 
 //插入区块
@@ -159,7 +172,7 @@ type Token struct {
 }
 
 func InsertToken(token Token) error {
-	session, collection := db.Connect(db.DB, "account")
+	session, collection := db.Connect(db.DB, "token")
 	defer session.Close()
 	err := collection.Insert(&token)
 	if err != nil {
@@ -182,6 +195,7 @@ type Account struct {
 	Address         string          `json:"address" bson:"address"`                   //账户地址
 	Balance         bson.Decimal128 `json:"balance" bson:"balance"`                   //账户余额
 	BlockNumber     int64           `json:"block_number" bson:"block_number"`         //更新余额时的区块链高度
+	Nonce           uint64          `json:"nonce" bson:"nonce"`
 }
 
 //查询账户是否存在
@@ -209,7 +223,7 @@ func AccountIsExist(address, contract string, number int64, symbol string) {
 	if contract == "BASE" {
 		//S是以太坊交易，查询以太坊余额
 		account := common.HexToAddress(address)
-		b, err := ethconnect.Client.BalanceAt(context.Background(), account, big.NewInt(number))
+		b, err := ethconnect.Client.BalanceAt(context.Background(), account, nil)
 		if err != nil {
 			log.Log.Fatal(err)
 		}
@@ -222,12 +236,12 @@ func AccountIsExist(address, contract string, number int64, symbol string) {
 		account := common.HexToAddress(contract)
 		newToken, e := token.NewToken(account, ethconnect.Client)
 		if e != nil {
-			log.Log.Fatal(e)
+			log.Log.Error(e)
 		}
 		address := common.HexToAddress(address)
 		bal, err := newToken.BalanceOf(&bind.CallOpts{}, address)
 		if err != nil {
-			log.Log.Fatal(err)
+			log.Log.Error(err)
 		}
 		var con Token
 		if e = collection.Find(bson.M{"contract_address": contract}).One(&con); e != nil {
@@ -236,7 +250,11 @@ func AccountIsExist(address, contract string, number int64, symbol string) {
 		div := decimal.NewFromInt(bal.Int64()).Div(decimal.NewFromInt(int64(math.Pow10(int(con.Decimals))))).String()
 		balance, _ = bson.ParseDecimal128(div)
 	}
-	if err := collection.Update(bson.M{"contract_address": contract, "address": address}, bson.M{"$set": bson.M{"balance": balance}}); err != nil {
+	nonce, err := ethconnect.Client.PendingNonceAt(context.Background(), common.HexToAddress(address))
+	if err != nil {
+		log.Log.Fatal(err)
+	}
+	if err := collection.Update(bson.M{"contract_address": contract, "address": address}, bson.M{"$set": bson.M{"balance": balance, "nonce": nonce}}); err != nil {
 		log.Log.Error(err.Error())
 		panic(err)
 	}

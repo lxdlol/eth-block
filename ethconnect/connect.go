@@ -14,3 +14,13 @@ func init() {
 		log.Log.Fatal(err)
 	}
 }
+
+func ReConnect() {
+	for {
+		if Client == nil {
+			Client, _ = ethclient.Dial("ws://192.168.8.126:8561")
+		} else {
+			continue
+		}
+	}
+}

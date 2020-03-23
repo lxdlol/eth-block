@@ -44,7 +44,7 @@ func InsertMetric(m Metric) error {
 func UpdateMetric(filed int64, tps int64, dur int64) error {
 	session, collection := db.Connect(db.DB, "metric")
 	defer session.Close()
-	update := collection.Update(bson.M{"block_number": filed}, bson.M{"$set": bson.M{"tps": tps, "duration": dur}})
+	update := collection.Update(bson.M{"blocknumber": filed}, bson.M{"$set": bson.M{"tps": tps, "duration": dur}})
 	return update
 }
 

@@ -15,6 +15,7 @@ import (
 	"github.com/shopspring/decimal"
 	"gopkg.in/mgo.v2/bson"
 	"math"
+	"math/big"
 	"strconv"
 )
 
@@ -26,6 +27,8 @@ var (
 	Tps         = make(chan models.Metric, 10000)
 )
 
+const tranhash = "0xddf252ad1be2c89b69c2b068fc378daa952ba7f163c4a11628f55a4df523b3ef"
+
 //获取区块信息
 func GetBlock() {
 	headers := make(chan *types.Header)
@@ -34,26 +37,35 @@ func GetBlock() {
 		log.Log.Fatal(err)
 	}
 	fmt.Println("start")
-	var temp string
 	for {
 		select {
 		case err := <-sub.Err():
 			log.Log.Fatal(err)
 		case header := <-headers:
 			fmt.Println(header.Hash().Hex()) // 0xbc10defa8dda384c96a17640d84de5578804945d347072e091b4e5f390ddea7f
-			if temp != header.Hash().Hex() {
-				block, err := ethconnect.Client.BlockByHash(context.Background(), header.Hash())
-				if err != nil {
-					log.Log.Fatal(err)
-				}
-				fmt.Println(block.Number())
-				Block <- block
-				fmt.Println("ok")
+			block, err := ethconnect.Client.BlockByHash(context.Background(), header.Hash())
+			if err != nil {
+				log.Log.Fatal(err)
 			}
-			temp = header.Hash().Hex()
+			rightBlock(block)
 		}
 	}
 }
+
+//判断落盘区块是否连续
+func rightBlock(block *types.Block) {
+	maxBlock := models.MaxBlock()
+	max := block.Number().Int64()
+	for i := int64(maxBlock); i < max; i++ {
+		block, err := ethconnect.Client.BlockByNumber(context.Background(), big.NewInt(int64(i+1)))
+		if err != nil {
+			log.Log.Fatal(err)
+		}
+		fmt.Println(block.Number())
+		Block <- block
+	}
+}
+
 func DealBlockInfo() {
 	for {
 		var n int
@@ -118,6 +130,7 @@ func InsertBlockTransfer(block *types.Block) {
 	defer session.Close()
 	for k, v := range tx {
 		//获取交易信息
+		fmt.Println("处理区块的每一笔交易", k)
 		var transaction models.Transaction
 		v2, r, s := v.RawSignatureValues()
 		fromString, _ := decimal.NewFromString(v.Value().String())
@@ -179,14 +192,16 @@ func GetSendAddr(tx *types.Transaction) string {
 		log.Log.Fatal(err)
 	}
 	if msg, err := tx.AsMessage(types.NewEIP155Signer(chainID)); err != nil {
-		return msg.From().String()
-	} else {
+		log.Log.Fatal(err)
 		return ""
+	} else {
+		return msg.From().String()
 	}
 }
 
 //处理每条交易的log生成可索引的交易记录,
 func DoReceipt(tx *types.Transaction, block *types.Block) int64 {
+	fmt.Println("every log")
 	receipt, err := ethconnect.Client.TransactionReceipt(context.Background(), tx.Hash())
 	if err != nil {
 		log.Log.Fatal(err)
@@ -195,28 +210,33 @@ func DoReceipt(tx *types.Transaction, block *types.Block) int64 {
 	defer s.Close()
 	//区块交易次数
 	var num int64 = 0
+	fmt.Println(len(receipt.Logs))
 	if len(receipt.Logs) > 0 {
 		//代币交易
 		var Transfer models.Transfer
 		for index, k := range receipt.Logs {
+			fmt.Println(index)
 			//查询token表是否存在这种代币地址
 			//大于0有代笔交易，否则没有代笔交易，eth交易
-			if len(k.Topics) > 0 && k.Topics[0].Hex() != "" {
+			if len(k.Topics) > 0 && k.Address.Hex() != "" && k.Topics[0].Hex() == tranhash {
 				num++
 				var result models.Token
 				var symbol string
+				var dec int8
+				var addr string
 				session, c := db.Connect(db.DB, "token")
 				defer session.Close()
-				if err := c.Find(bson.M{"contract_address": k.Topics[0].Hex()}).One(&result); err != nil {
+				//是否已知代币
+				if err := c.Find(bson.M{"contract_address": k.Address.Hex()}).One(&result); err != nil {
 					//未知代币交易，用rpc调用查询到这种代币合约，存入token表
-					tokenAddress := common.HexToAddress(k.Topics[0].String())
+					tokenAddress := common.HexToAddress(k.Address.Hex())
 					newToken, err := token.NewToken(tokenAddress, ethconnect.Client)
 					if err != nil {
 						log.Log.Error(err.Error())
 					}
 					s, err := newToken.Symbol(&bind.CallOpts{})
 					if err != nil {
-						log.Log.Error(k.Topics[0].String() + "," + k.Topics[0].Hex() + err.Error())
+						log.Log.Error(k.Address.Hex() + "," + err.Error())
 						goto Here
 					}
 					supply, err := newToken.TotalSupply(&bind.CallOpts{})
@@ -233,29 +253,34 @@ func DoReceipt(tx *types.Transaction, block *types.Block) int64 {
 					}
 					decimal128, _ := bson.ParseDecimal128(supply.String())
 					var token models.Token = models.Token{
-						ContractAddress: k.Topics[0].Hex(),
+						ContractAddress: k.Address.Hex(),
 						Name:            name,
 						Symbol:          s,
 						Decimals:        int8(decimals),
 						TotalSupply:     decimal128,
 					}
+					fmt.Println("插入新token")
 					if err := models.InsertToken(token); err != nil {
 						log.Log.Error(err)
 						delErr(err)
 					}
 					symbol = s
+					dec = int8(decimals)
+					addr = k.Address.Hex()
 				} else {
 					//已知代币交易
 					symbol = result.Symbol
+					dec = result.Decimals
+					addr = result.ContractAddress
 				}
 				var num string
 				json.Unmarshal(k.Data, &num)
 				fromString, _ := decimal.NewFromString(num)
 				fmt.Println("交易额度：", fromString)
-				div := fromString.Div(decimal.NewFromInt(int64(math.Pow10(int(result.Decimals)))))
+				div := fromString.Div(decimal.NewFromInt(int64(math.Pow10(int(dec)))))
 				decimal128, _ := bson.ParseDecimal128(div.String())
 				Transfer = models.Transfer{
-					ContractAddress: result.ContractAddress,
+					ContractAddress: addr,
 					Symbol:          symbol,
 					From:            k.Topics[1].Hex(),
 					To:              k.Topics[2].Hex(),
@@ -280,11 +305,17 @@ Here:
 		//太坊交易
 		var Transfer models.Transfer
 		decimal128, _ := bson.ParseDecimal128(strconv.Itoa(int(tx.Value().Int64() / int64(math.Pow10(18)))))
+		var to string
+		if tx.To() == nil {
+			to = ""
+		} else {
+			to = tx.To().Hex()
+		}
 		Transfer = models.Transfer{
 			ContractAddress: "BASE",
-			Symbol:          "",
+			Symbol:          "ETH",
 			From:            GetSendAddr(tx),
-			To:              tx.To().Hex(),
+			To:              to,
 			Value:           decimal128,
 			TransactionHash: tx.Hash().Hex(),
 			TransferIndex:   1,
@@ -298,6 +329,7 @@ Here:
 		}
 		Account <- Transfer
 	}
+	fmt.Println("every log end")
 	//传输区块交易交易数量信息
 	return num
 }
@@ -316,7 +348,7 @@ func UpdateCountBalance() {
 		select {
 		case v := <-Account:
 			n++
-			fmt.Println("账户越更新：", v)
+			fmt.Println("账户越更新：", v.ContractAddress)
 			//查询账户是否存在，存在更新账户余额，不存在创建
 			models.AccountIsExist(v.To, v.ContractAddress, v.BlockNumber, v.Symbol)
 			models.AccountIsExist(v.From, v.ContractAddress, v.BlockNumber, v.Symbol)
