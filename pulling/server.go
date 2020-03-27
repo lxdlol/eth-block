@@ -251,7 +251,10 @@ func DoReceipt(tx *types.Transaction, block *types.Block) int64 {
 					if err != nil {
 						log.Log.Error(err.Error())
 					}
-					decimal128, _ := bson.ParseDecimal128(supply.String())
+					decimal128, err := bson.ParseDecimal128(supply.String())
+					if err != nil {
+						decimal128, _ = bson.ParseDecimal128("0")
+					}
 					var token models.Token = models.Token{
 						ContractAddress: k.Address.Hex(),
 						Name:            name,

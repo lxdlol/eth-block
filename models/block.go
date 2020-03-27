@@ -181,6 +181,19 @@ func InsertToken(token Token) error {
 	return nil
 }
 
+//查询代币总发行量
+func FindTotalSupplyByContractAddress(contract string) float64 {
+	session, collection := db.Connect(db.DB, "token")
+	defer session.Close()
+	var token Token
+	if err := collection.Find(bson.M{"contract_address": contract}).One(&token); err != nil {
+		return 0
+	}
+	total, _ := decimal.NewFromString(token.TotalSupply.String())
+	f, _ := total.Float64()
+	return f
+}
+
 //账户
 type Account struct {
 	/**
@@ -195,7 +208,8 @@ type Account struct {
 	Address         string          `json:"address" bson:"address"`                   //账户地址
 	Balance         bson.Decimal128 `json:"balance" bson:"balance"`                   //账户余额
 	BlockNumber     int64           `json:"block_number" bson:"block_number"`         //更新余额时的区块链高度
-	Nonce           uint64          `json:"nonce" bson:"nonce"`
+	Nonce           uint64          `json:"nonce" bson:"nonce"`                       //交易次数
+	Proportion      float32         `json:"proportion" bson:"proportion"`             //占比
 }
 
 //查询账户是否存在
@@ -220,6 +234,7 @@ func AccountIsExist(address, contract string, number int64, symbol string) {
 		}
 	}
 	var balance bson.Decimal128
+	var proportion float32
 	if contract == "BASE" {
 		//S是以太坊交易，查询以太坊余额
 		account := common.HexToAddress(address)
@@ -231,6 +246,7 @@ func AccountIsExist(address, contract string, number int64, symbol string) {
 		fbalance.SetString(b.String())
 		ethValue := new(big.Float).Quo(fbalance, big.NewFloat(math.Pow10(18))).String()
 		balance, _ = bson.ParseDecimal128(ethValue)
+		proportion = 0
 	} else {
 		//是代币交易
 		account := common.HexToAddress(contract)
@@ -247,14 +263,20 @@ func AccountIsExist(address, contract string, number int64, symbol string) {
 		if e = collection.Find(bson.M{"contract_address": contract}).One(&con); e != nil {
 			log.Log.Error(e.Error())
 		}
-		div := decimal.NewFromInt(bal.Int64()).Div(decimal.NewFromInt(int64(math.Pow10(int(con.Decimals))))).String()
-		balance, _ = bson.ParseDecimal128(div)
+		div := decimal.NewFromInt(bal.Int64()).Div(decimal.NewFromInt(int64(math.Pow10(int(con.Decimals)))))
+		balance, _ = bson.ParseDecimal128(div.String())
+		if total := FindTotalSupplyByContractAddress(contract); total == 0 {
+			proportion = 0
+		} else {
+			f, _ := div.Div(decimal.NewFromFloat(total)).Float64()
+			proportion = float32(f)
+		}
 	}
 	nonce, err := ethconnect.Client.PendingNonceAt(context.Background(), common.HexToAddress(address))
 	if err != nil {
 		log.Log.Fatal(err)
 	}
-	if err := collection.Update(bson.M{"contract_address": contract, "address": address}, bson.M{"$set": bson.M{"balance": balance, "nonce": nonce}}); err != nil {
+	if err := collection.Update(bson.M{"contract_address": contract, "address": address}, bson.M{"$set": bson.M{"balance": balance, "nonce": nonce, "proportion": proportion}}); err != nil {
 		log.Log.Error(err.Error())
 		panic(err)
 	}
